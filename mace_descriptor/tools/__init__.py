@@ -21,7 +21,6 @@ from .utils import (
     get_atomic_number_table_from_zs,
     get_tag,
     setup_logger,
-    numerical_descriptor_gradient,
 )
 
 __all__ = [
@@ -34,7 +33,6 @@ __all__ = [
     "set_seeds",
     "init_device",
     "setup_logger",
-    "numerical_descriptor_gradient",
     "get_tag",
     "count_parameters",
     "get_atomic_number_table_from_zs",
