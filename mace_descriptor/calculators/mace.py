@@ -46,17 +46,9 @@ def get_model_dtype(model: torch.nn.Module) -> torch.dtype:
 
 def extract_invariant(x: torch.Tensor, num_layers: int, num_features: int, l_max: int):
     out = []
-    out.append(x[:, :num_features])
+    out.append(x[:num_features])
     for i in range(1, num_layers):
-        out.append(
-            x[
-            :,
-            i
-            * (l_max + 1) ** 2
-            * num_features: (i * (l_max + 1) ** 2 + 1)
-                            * num_features,
-            ]
-        )
+        out.append(x[i * (l_max + 1) ** 2 * num_features: (i * (l_max + 1) ** 2 + 1) * num_features,])
     return torch.cat(out, dim=-1)
 
 
@@ -368,7 +360,7 @@ class MACECalculator(Calculator):
             num_layers = num_interactions
 
         batch = self._atoms_to_batch(atoms)
-        descriptors = [model(batch.to_dict())["node_feats"] for model in self.models]
+        descriptors = self.models[0](batch.to_dict())["node_feats"]
 
         irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
         l_max = irreps_out.lmax
