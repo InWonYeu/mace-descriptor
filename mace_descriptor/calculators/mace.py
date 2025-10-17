@@ -338,21 +338,18 @@ class MACECalculator(Calculator):
         return hessians
 
     def get_descriptors(self, atoms=None, num_layers=-1):
-        """Extracts the descriptors from MACE model.
-        :param atoms: ase.Atoms object
-        :param invariants_only: bool, if True only the invariant descriptors are returned
-        :param num_layers: int, number of layers to extract descriptors from, if -1 all layers are used
-        :return: np.ndarray (num_atoms, num_interactions, invariant_features) of invariant descriptors if num_models is 1 or list[np.ndarray] otherwise
-        """
+        """Extracts the descriptors from MACE model."""
         if atoms is None and self.atoms is None:
             raise ValueError("atoms not set")
         if atoms is None:
             atoms = self.atoms
         if self.model_type != "MACE":
             raise NotImplementedError("Only implemented for MACE models")
+
         num_interactions = int(self.models[0].num_interactions)
         if num_layers == -1:
             num_layers = num_interactions
+
         batch = self._atoms_to_batch(atoms)
         descriptors = [model(batch.to_dict())["node_feats"] for model in self.models]
 
@@ -360,19 +357,15 @@ class MACECalculator(Calculator):
         l_max = irreps_out.lmax
         num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
         per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
-        per_layer_features[-1] = (
-            num_invariant_features  # Equivariant features not created for the last layer
-        )
+        per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
 
         to_keep = np.sum(per_layer_features[:num_layers])
-        descriptors = [descriptor[:, :to_keep] for descriptor in descriptors]
+        descriptors = [desc[:, :to_keep].detach().clone() for desc in descriptors]
 
-        if self.num_models == 1:
-            return descriptors[0]
-        return descriptors
+        return descriptors[0] if self.num_models == 1 else descriptors
 
-    def get_descriptors_batch(self, atoms_list, num_layers=-1):
-        # === Setup for batch ===
+    def get_descriptors_batch(self, atoms_list):
+        """Batch version of descriptor extraction for multiple structures."""
         self.arrays_keys.update({self.charges_key: "charges"})
         keyspec = data.KeySpecification(info_keys=self.info_keys, arrays_keys=self.arrays_keys)
 
@@ -385,13 +378,14 @@ class MACECalculator(Calculator):
                                                         heads=self.available_heads,) for config in configs]
 
         # Batch all together
-        data_loader = get_data_loader(dataset=atomic_data_list, batch_size=len(atoms_list), shuffle=False, drop_last=False,)
+        data_loader = get_data_loader(dataset=atomic_data_list, batch_size=len(atoms_list), shuffle=False,
+                                      drop_last=False)
         batch = next(iter(data_loader)).to(self.device)
     
         # Feedforward through model
-        desc_all = self.models[0](batch.to_dict())["node_feats"]  # shape: (total_num_atoms, descriptor_dim)
-    
-        # 
+        desc_all = self.models[0](batch.to_dict())["node_feats"]  # shape: (total_atoms, descriptor_dim)
+        desc_all = desc_all.detach().clone()
+
         atom_counts = [len(atoms) for atoms in atoms_list]
         descriptor_splits = torch.split(desc_all, atom_counts, dim=0)  # shape: (num_structures, num_atoms, descriptor_dim)
     
