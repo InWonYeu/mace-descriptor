@@ -337,7 +337,22 @@ class MACECalculator(Calculator):
             return hessians[0]
         return hessians
 
-    def get_descriptors(self, atoms=None, num_layers=-1):
+    def extract_invariant(x: torch.Tensor, num_layers: int, num_features: int, l_max: int):
+        out = []
+        out.append(x[:, :num_features])
+        for i in range(1, num_layers):
+            out.append(
+                x[
+                :,
+                i
+                * (l_max + 1) ** 2
+                * num_features: (i * (l_max + 1) ** 2 + 1)
+                                * num_features,
+                ]
+            )
+        return torch.cat(out, dim=-1)
+
+    def get_descriptors(self, atoms=None, invariants_only=True, num_layers=-1):
         """Extracts the descriptors from MACE model."""
         if atoms is None and self.atoms is None:
             raise ValueError("atoms not set")
@@ -359,13 +374,25 @@ class MACECalculator(Calculator):
         per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
         per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
 
+        if invariants_only:
+            descriptors = [
+                self.extract_invariant(descriptor,
+                                       num_layers=num_layers,
+                                       num_features=num_invariant_features,
+                                       l_max=l_max,)
+                for descriptor in descriptors]
+
         to_keep = np.sum(per_layer_features[:num_layers])
         descriptors = [desc[:, :to_keep].detach().clone() for desc in descriptors]
 
         return descriptors[0] if self.num_models == 1 else descriptors
 
-    def get_descriptors_batch(self, atoms_list):
+    def get_descriptors_batch(self, atoms_list, invariants_only=True, num_layers=-1):
         """Batch version of descriptor extraction for multiple structures."""
+        num_interactions = int(self.models[0].num_interactions)
+        if num_layers == -1:
+            num_layers = num_interactions
+
         self.arrays_keys.update({self.charges_key: "charges"})
         keyspec = data.KeySpecification(info_keys=self.info_keys, arrays_keys=self.arrays_keys)
 
@@ -385,6 +412,23 @@ class MACECalculator(Calculator):
         # Feedforward through model
         desc_all = self.models[0](batch.to_dict())["node_feats"]  # shape: (total_atoms, descriptor_dim)
         desc_all = desc_all.detach().clone()
+
+        irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
+        l_max = irreps_out.lmax
+        num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
+        per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
+        per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
+
+        if invariants_only:
+            desc_all = [
+                self.extract_invariant(descriptor,
+                                       num_layers=num_layers,
+                                       num_features=num_invariant_features,
+                                       l_max=l_max,)
+                for descriptor in desc_all]
+
+        to_keep = np.sum(per_layer_features[:num_layers])
+        desc_all = [desc[:, :to_keep].detach().clone() for desc in desc_all]
 
         atom_counts = [len(atoms) for atoms in atoms_list]
         descriptor_splits = torch.split(desc_all, atom_counts, dim=0)  # shape: (num_structures, num_atoms, descriptor_dim)
