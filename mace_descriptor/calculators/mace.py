@@ -377,7 +377,7 @@ class MACECalculator(Calculator):
                 for descriptor in descriptors]
 
         to_keep = np.sum(per_layer_features[:num_layers])
-        descriptors = [desc[:, :to_keep].detach().clone() for desc in descriptors]
+        descriptors = [desc[:to_keep].detach().clone() for desc in descriptors]
 
         return descriptors[0] if self.num_models == 1 else descriptors
 
@@ -422,7 +422,7 @@ class MACECalculator(Calculator):
                 for descriptor in desc_all]
 
         to_keep = np.sum(per_layer_features[:num_layers])
-        desc_all = [desc[:, :to_keep].detach().clone() for desc in desc_all]
+        desc_all = [desc[:to_keep].detach().clone() for desc in desc_all]
 
         atom_counts = [len(atoms) for atoms in atoms_list]
         descriptor_splits = torch.split(desc_all, atom_counts,
