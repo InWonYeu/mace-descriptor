@@ -376,8 +376,8 @@ class MACECalculator(Calculator):
                                   l_max=l_max, )
                 for descriptor in descriptors]
 
-        to_keep = np.sum(per_layer_features[:num_layers])
-        descriptors = [desc[:to_keep].detach().clone() for desc in descriptors]
+        # to_keep = np.sum(per_layer_features[:num_layers])
+        descriptors = [desc[:].detach().clone() for desc in descriptors]
 
         return descriptors[0] if self.num_models == 1 else descriptors
 
@@ -405,6 +405,7 @@ class MACECalculator(Calculator):
 
         # Feedforward through model
         desc_all = [model(batch.to_dict())["node_feats"] for model in self.models]  # shape: (total_atoms, descriptor_dim)
+        print(len(desc_all), desc_all[0].shape)
 
         irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
         l_max = irreps_out.lmax
@@ -419,13 +420,16 @@ class MACECalculator(Calculator):
                                   num_features=num_invariant_features,
                                   l_max=l_max, )
                 for descriptor in desc_all]
+        print(len(desc_all), desc_all[0].shape)
 
-        to_keep = np.sum(per_layer_features[:num_layers])
-        desc_all = [desc[:to_keep].detach().clone() for desc in desc_all]
+        # to_keep = np.sum(per_layer_features[:num_layers])
+        desc_all = [desc[:].detach().clone() for desc in desc_all]
+        print(len(desc_all), desc_all[0].shape)
 
         # if self.num_models == 1:
         atom_counts = [len(atoms) for atoms in atoms_list]
         descriptor_splits = torch.split(desc_all[0], atom_counts, dim=0)
+        print(len(descriptor_splits), descriptor_splits[0].shape)
         # shape: (num_structures, num_atoms, descriptor_dim)
 
         return descriptor_splits
