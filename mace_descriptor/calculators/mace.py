@@ -28,6 +28,7 @@ from mace_descriptor.tools.scripts_utils import extract_model
 
 try:
     import intel_extension_for_pytorch as ipex
+
     has_ipex = True
 except ImportError:
     has_ipex = False
@@ -41,6 +42,22 @@ def get_model_dtype(model: torch.nn.Module) -> torch.dtype:
     if mode_dtype == torch.float32:
         return "float32"
     raise ValueError(f"Unknown dtype {mode_dtype}")
+
+
+def extract_invariant(x: torch.Tensor, num_layers: int, num_features: int, l_max: int):
+    out = []
+    out.append(x[:, :num_features])
+    for i in range(1, num_layers):
+        out.append(
+            x[
+            :,
+            i
+            * (l_max + 1) ** 2
+            * num_features: (i * (l_max + 1) ** 2 + 1)
+                            * num_features,
+            ]
+        )
+    return torch.cat(out, dim=-1)
 
 
 class MACECalculator(Calculator):
@@ -60,20 +77,20 @@ class MACECalculator(Calculator):
     """
 
     def __init__(
-        self,
-        model_paths: Union[list, str, None] = None,
-        models: Union[List[torch.nn.Module], torch.nn.Module, None] = None,
-        device: str = "cpu",
-        energy_units_to_eV: float = 1.0,
-        length_units_to_A: float = 1.0,
-        default_dtype="",
-        charges_key="Qs",
-        info_keys=None,
-        arrays_keys=None,
-        model_type="MACE",
-        compile_mode=None,
-        fullgraph=True,
-        **kwargs,
+            self,
+            model_paths: Union[list, str, None] = None,
+            models: Union[List[torch.nn.Module], torch.nn.Module, None] = None,
+            device: str = "cpu",
+            energy_units_to_eV: float = 1.0,
+            length_units_to_A: float = 1.0,
+            default_dtype="",
+            charges_key="Qs",
+            info_keys=None,
+            arrays_keys=None,
+            model_type="MACE",
+            compile_mode=None,
+            fullgraph=True,
+            **kwargs,
     ):
         Calculator.__init__(self, **kwargs)
         if "model_path" in kwargs:
@@ -337,21 +354,6 @@ class MACECalculator(Calculator):
             return hessians[0]
         return hessians
 
-    def extract_invariant(x: torch.Tensor, num_layers: int, num_features: int, l_max: int):
-        out = []
-        out.append(x[:, :num_features])
-        for i in range(1, num_layers):
-            out.append(
-                x[
-                :,
-                i
-                * (l_max + 1) ** 2
-                * num_features: (i * (l_max + 1) ** 2 + 1)
-                                * num_features,
-                ]
-            )
-        return torch.cat(out, dim=-1)
-
     def get_descriptors(self, atoms=None, invariants_only=True, num_layers=-1):
         """Extracts the descriptors from MACE model."""
         if atoms is None and self.atoms is None:
@@ -376,10 +378,10 @@ class MACECalculator(Calculator):
 
         if invariants_only:
             descriptors = [
-                self.extract_invariant(descriptor,
-                                       num_layers=num_layers,
-                                       num_features=num_invariant_features,
-                                       l_max=l_max,)
+                extract_invariant(descriptor,
+                                  num_layers=num_layers,
+                                  num_features=num_invariant_features,
+                                  l_max=l_max, )
                 for descriptor in descriptors]
 
         to_keep = np.sum(per_layer_features[:num_layers])
@@ -402,13 +404,13 @@ class MACECalculator(Calculator):
         atomic_data_list = [data.AtomicData.from_config(config,
                                                         z_table=self.z_table,
                                                         cutoff=self.r_max,
-                                                        heads=self.available_heads,) for config in configs]
+                                                        heads=self.available_heads, ) for config in configs]
 
         # Batch all together
         data_loader = get_data_loader(dataset=atomic_data_list, batch_size=len(atoms_list), shuffle=False,
                                       drop_last=False)
         batch = next(iter(data_loader)).to(self.device)
-    
+
         # Feedforward through model
         desc_all = self.models[0](batch.to_dict())["node_feats"]  # shape: (total_atoms, descriptor_dim)
         desc_all = desc_all.detach().clone()
@@ -421,18 +423,19 @@ class MACECalculator(Calculator):
 
         if invariants_only:
             desc_all = [
-                self.extract_invariant(descriptor,
-                                       num_layers=num_layers,
-                                       num_features=num_invariant_features,
-                                       l_max=l_max,)
+                extract_invariant(descriptor,
+                                  num_layers=num_layers,
+                                  num_features=num_invariant_features,
+                                  l_max=l_max, )
                 for descriptor in desc_all]
 
         to_keep = np.sum(per_layer_features[:num_layers])
         desc_all = [desc[:, :to_keep].detach().clone() for desc in desc_all]
 
         atom_counts = [len(atoms) for atoms in atoms_list]
-        descriptor_splits = torch.split(desc_all, atom_counts, dim=0)  # shape: (num_structures, num_atoms, descriptor_dim)
-    
+        descriptor_splits = torch.split(desc_all, atom_counts,
+                                        dim=0)  # shape: (num_structures, num_atoms, descriptor_dim)
+
         return descriptor_splits
 
     def numerical_descriptor_gradient(self, atoms, delta=1e-4):
