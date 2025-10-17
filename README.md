@@ -22,17 +22,10 @@ from ase.build import molecule
 
 atoms = molecule("CH4")
 calc = mace_mp(model="small")
-desc = calc.get_descriptors(atoms)  
-# shape: (n_atoms, descriptor_dim)
-```
+desc = calc.get_descriptors(atoms)  # shape: (n_atoms, descriptor_dim)
 
-To compute **numerical gradients** of the MACE descriptors with respect to atomic positions:
-
-```python
-from mace_descriptor.tools import numerical_descriptor_gradient
-
-grad = numerical_descriptor_gradient(atoms, calc)
-# shape: (n_atoms, n_atoms, 3, descriptor_dim)
+# compute numerical gradients with respect to atomic positions
+desc_grad = calc.numerical_descriptor_gradient(atoms)  # shape: (n_atoms, n_atoms, 3, descriptor_dim)
 ```
 
 ---
