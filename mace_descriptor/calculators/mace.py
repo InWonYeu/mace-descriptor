@@ -396,3 +396,48 @@ class MACECalculator(Calculator):
         descriptor_splits = torch.split(desc_all, atom_counts, dim=0)  # shape: (num_structures, num_atoms, descriptor_dim)
     
         return descriptor_splits
+
+    def numerical_descriptor_gradient(self, atoms, delta=1e-4):
+        atoms = atoms.copy()
+        n_atoms = len(atoms)
+
+        desc_0 = self.get_descriptors(atoms)
+        D = desc_0.shape[1]
+
+        # 전체 forward/backward 구조 리스트
+        displaced_atoms = []
+
+        # mapping: (atom_idx, coord_idx) -> index in descriptor list
+        index_map = {}
+
+        counter = 0
+        for i in range(n_atoms):
+            for j in range(3):  # x, y, z
+                # forward
+                atoms_f = atoms.copy()
+                atoms_f.positions[i, j] += delta
+                displaced_atoms.append(atoms_f)
+                index_map[(i, j, "f")] = counter
+                counter += 1
+
+                # backward
+                atoms_b = atoms.copy()
+                atoms_b.positions[i, j] -= delta
+                displaced_atoms.append(atoms_b)
+                index_map[(i, j, "b")] = counter
+                counter += 1
+
+        all_desc = self.get_descriptors_batch(displaced_atoms)
+        grad = torch.empty((n_atoms, n_atoms, 3, D))
+
+        for i in range(n_atoms):
+            for j in range(3):
+                f_idx = index_map[(i, j, "f")]
+                b_idx = index_map[(i, j, "b")]
+
+                desc_f = all_desc[f_idx]
+                desc_b = all_desc[b_idx]
+
+                grad[:, i, j, :] = (desc_f - desc_b) / (2 * delta)
+
+        return grad
