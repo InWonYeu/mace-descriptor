@@ -423,9 +423,10 @@ class MACECalculator(Calculator):
         to_keep = np.sum(per_layer_features[:num_layers])
         desc_all = [desc[:to_keep].detach().clone() for desc in desc_all]
 
+        # if self.num_models == 1:
         atom_counts = [len(atoms) for atoms in atoms_list]
-        descriptor_splits = torch.split(desc_all, atom_counts,
-                                        dim=0)  # shape: (num_structures, num_atoms, descriptor_dim)
+        descriptor_splits = torch.split(desc_all[0], atom_counts, dim=0)
+        # shape: (num_structures, num_atoms, descriptor_dim)
 
         return descriptor_splits
 
