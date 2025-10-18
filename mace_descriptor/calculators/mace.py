@@ -360,13 +360,14 @@ class MACECalculator(Calculator):
             num_layers = num_interactions
 
         batch = self._atoms_to_batch(atoms)
-        descriptors = [model(batch.to_dict())["node_feats"] for model in self.models]
+        with torch.no_grad():
+            descriptors = [model(batch.to_dict())["node_feats"] for model in self.models]
 
-        irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
-        l_max = irreps_out.lmax
-        num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
-        per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
-        per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
+            irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
+            l_max = irreps_out.lmax
+            num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
+            per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
+            per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
 
         if invariants_only:
             descriptors = [
@@ -376,8 +377,8 @@ class MACECalculator(Calculator):
                                   l_max=l_max, )
                 for descriptor in descriptors]
 
-        # to_keep = np.sum(per_layer_features[:num_layers])
-        descriptors = [desc[:].detach().clone() for desc in descriptors]
+        to_keep = np.sum(per_layer_features[:num_layers])
+        descriptors = [desc[:, :to_keep].detach().clone() for desc in descriptors]
 
         return descriptors[0] if self.num_models == 1 else descriptors
 
@@ -404,14 +405,15 @@ class MACECalculator(Calculator):
         batch = next(iter(data_loader)).to(self.device)
 
         # Feedforward through model
-        desc_all = [model(batch.to_dict())["node_feats"] for model in self.models]  # shape: (total_atoms, descriptor_dim)
-        print(len(desc_all), desc_all[0].shape)
+        with torch.no_grad():
+            desc_all = [model(batch.to_dict())["node_feats"] for model in self.models]  # shape: (total_atoms, descriptor_dim)
+            print(len(desc_all), desc_all[0].shape)
 
-        irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
-        l_max = irreps_out.lmax
-        num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
-        per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
-        per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
+            irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
+            l_max = irreps_out.lmax
+            num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
+            per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
+            per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
 
         if invariants_only:
             desc_all = [
@@ -422,8 +424,8 @@ class MACECalculator(Calculator):
                 for descriptor in desc_all]
         print(len(desc_all), desc_all[0].shape)
 
-        # to_keep = np.sum(per_layer_features[:num_layers])
-        desc_all = [desc[:].detach().clone() for desc in desc_all]
+        to_keep = np.sum(per_layer_features[:num_layers])
+        desc_all = [desc[:, :to_keep].detach().clone() for desc in desc_all]
         print(len(desc_all), desc_all[0].shape)
 
         # if self.num_models == 1:
