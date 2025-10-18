@@ -348,10 +348,55 @@ class MACECalculator(Calculator):
 
     def get_descriptors(self, atoms=None, invariants_only=True, num_layers=-1):
         """Extracts the descriptors from MACE model."""
-        if atoms is None and self.atoms is None:
-            raise ValueError("atoms not set")
-        if atoms is None:
-            atoms = self.atoms
+        if self.model_type != "MACE":
+            raise NotImplementedError("Only implemented for MACE models")
+
+        with torch.no_grad():
+            
+            num_interactions = int(self.models[0].num_interactions)
+            if num_layers == -1:
+                num_layers = num_interactions
+    
+            batch = self._atoms_to_batch(atoms)
+            
+            if num_layers == 0:
+                desc = self.models[0].node_embedding(batch.to_dict()['node_attrs'])
+                return desc.detach().clone()
+                
+            descriptors = [model(batch.to_dict(), compute_force=False)["node_feats"] for model in self.models]
+    
+            irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
+            l_max = irreps_out.lmax
+            num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
+            per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
+            per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
+    
+            if invariants_only:
+                descriptors = [
+                    extract_invariant(descriptor,
+                                      num_layers=num_layers,
+                                      num_features=num_invariant_features,
+                                      l_max=l_max, )
+                    for descriptor in descriptors]
+    
+            to_keep = np.sum(per_layer_features[:num_layers])
+            descriptors = [desc[:, :to_keep] for desc in descriptors]
+            
+            return descriptors[0]
+        
+        # if self.num_models == 1:
+        #     from torch.autograd import grad
+
+        #     desc = descriptors[0]
+        #     desc_scalar = desc.sum()
+        #     grad_desc = grad(outputs=[desc_scalar], inputs=[batch.positions], retain_graph=False, create_graph=False, allow_unused=False)[0]
+
+        #     return descriptors[0]
+
+        # else:
+        #     return descriptors
+
+    def get_descriptors_with_jacobian(self, atoms=None, invariants_only=True, num_layers=-1):
         if self.model_type != "MACE":
             raise NotImplementedError("Only implemented for MACE models")
 
@@ -360,27 +405,37 @@ class MACECalculator(Calculator):
             num_layers = num_interactions
 
         batch = self._atoms_to_batch(atoms)
-        descriptors = [model(batch.to_dict())["node_feats"] for model in self.models]
+        positions = batch.positions.detach().clone().requires_grad_(True)
 
-        irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
-        l_max = irreps_out.lmax
-        num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
-        per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
-        per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
+        def descriptor_fn(pos):
+            batch.positions = pos
+            descriptors = [model(batch.to_dict(), compute_force=False)["node_feats"] for model in self.models]
+    
+            irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
+            l_max = irreps_out.lmax
+            num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
+            per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
+            per_layer_features[-1] = num_invariant_features  # last layer is scalar-only
+    
+            if invariants_only:
+                descriptors = [
+                    extract_invariant(descriptor,
+                                      num_layers=num_layers,
+                                      num_features=num_invariant_features,
+                                      l_max=l_max, )
+                    for descriptor in descriptors]
+    
+            to_keep = np.sum(per_layer_features[:num_layers])
+            descriptors = [desc[:, :to_keep] for desc in descriptors]
+            
+            return descriptors[0]
 
-        if invariants_only:
-            descriptors = [
-                extract_invariant(descriptor,
-                                  num_layers=num_layers,
-                                  num_features=num_invariant_features,
-                                  l_max=l_max, )
-                for descriptor in descriptors]
+        desc = descriptor_fn(positions)
+        desc_jac = torch.autograd.functional.jacobian(descriptor_fn, positions)  # (n_atoms, D, n_atoms, 3)
+        desc_grad = desc_jac.permute(0, 2, 3, 1)  # (n_atoms, n_atoms, 3, D)
 
-        to_keep = np.sum(per_layer_features[:num_layers])
-        descriptors = [desc[:, :to_keep].detach().clone() for desc in descriptors]
-
-        return descriptors[0] if self.num_models == 1 else descriptors
-
+        return desc.detach(), desc_grad.detach()
+    
     def get_descriptors_batch(self, atoms_list, invariants_only=True, num_layers=-1):
         """Batch version of descriptor extraction for multiple structures."""
         num_interactions = int(self.models[0].num_interactions)
